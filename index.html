@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nifty & BankNifty Intraday Analyzer</title>
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; }
+        .container { display: flex; flex-wrap: wrap; justify-content: space-around; }
+        .chart-container { width: 45%; margin-bottom: 20px; background: white; padding: 10px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        .position { font-weight: bold; font-size: 18px; }
+        .position.long { color: green; }
+        .position.short { color: red; }
+        .position.hold { color: orange; }
+        button { padding: 10px; margin: 10px; background: #007bff; color: white; border: none; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .indicators { margin-top: 10px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <h1>Nifty 50 & BankNifty Intraday Trading Positions</h1>
+    <p><strong>Disclaimer:</strong> This is for educational purposes. Trading involves risk. Signals are based on historical mock data and may not be accurate. Consult a professional.</p>
+    <button onclick="refreshCharts()">Refresh Data</button>
+    
+    <div class="container">
+        <div class="chart-container">
+            <h2>Nifty 50</h2>
+            <div id="nifty-chart" style="width: 100%; height: 400px;"></div>
+            <p>Position: <span id="nifty-position" class="position hold">HOLD</span></p>
+            <div class="indicators" id="nifty-indicators">Loading indicators...</div>
+        </div>
+        <div class="chart-container">
+            <h2>BankNifty</h2>
+            <div id="banknifty-chart" style="width: 100%; height: 400px;"></div>
+            <p>Position: <span id="banknifty-position" class="position hold">HOLD</span></p>
+            <div class="indicators" id="banknifty-indicators">Loading indicators...</div>
+        </div>
+    </div>
+
+    <script>
+        // Mock data (replace with real API: e.g., fetch from Yahoo Finance ^NSEI and ^NSEBANK)
+        let mockNiftyData = generateMockData(19500, 100);
+        let mockBankNiftyData = generateMockData(44000, 100);
+
+        function generateMockData(startPrice, points) {
+            const data = [];
+            let price = startPrice;
+            for (let i = 0; i < points; i++) {
+                const time = new Date(Date.now() - (points - i) * 60000).toISOString();
+                const open = price;
+                const high = price + Math.random() * 50;
+                const low = price - Math.random() * 50;
+                const close = low + Math.random() * (high - low);
+                price = close;
+                data.push({ time, open, high, low, close, volume: Math.floor(Math.random() * 200000) + 50000 });
+            }
+            return data;
+        }
+
+        // Indicator calculations (simplified; use technicalindicators library for accuracy)
+        function calculateRSI(closes, period = 14) {
+            if (closes.length < period + 1) return 50;
+            let gains = 0, losses = 0;
+            for (let i = 1; i <= period; i++) {
+                const change = closes[i] - closes[i - 1];
+                gains += Math.max(change, 0);
+                losses += Math.max(-change, 0);
+            }
+            const rs = gains / losses;
+            return 100 - (100 / (1 + rs));
+        }
+
+        function calculateSMA(closes, period = 20) {
+            if (closes.length < period) return closes[closes.length - 1];
+            return closes.slice(-period).reduce((a, b) => a + b) / period;
+        }
+
+        function calculateMACD(closes) {
+            const ema12 = calculateEMA(closes, 12);
+            const ema26 = calculateEMA(closes, 26);
+            return ema12 - ema26;
+        }
+
+        function calculateEMA(closes, period) {
+            if (closes.length < period) return closes[closes.length - 1];
+            const multiplier = 2 / (period + 1);
+            let ema = closes.slice(0, period).reduce((a, b) => a + b) / period;
+            for (let i = period; i < closes.length; i++) {
+                ema = (closes[i] - ema) * multiplier + ema;
+            }
+            return ema;
+        }
+
+        function calculateBollingerBands(closes, period = 20) {
+            const sma = calculateSMA(closes, period);
+            const variance = closes.slice(-period).reduce((sum, val) => sum + Math.pow(val - sma, 2), 0) / period;
+            const stdDev = Math.sqrt(variance);
+            return { upper: sma + 2 * stdDev, lower: sma - 2 * stdDev };
+        }
+
+        function calculateStochastic(highs, lows, closes, period = 14) {
+            const highestHigh = Math.max(...highs.slice(-period));
+            const lowestLow = Math.min(...lows.slice(-period));
+            return ((closes[closes.length - 1] - lowestLow) / (highestHigh - lowestLow)) * 100;
+        }
+
+        // Pattern detection (basic)
+        function detectPatterns(data) {
+            const highs = data.map(d => d.high);
+            const lows = data.map(d => d.low);
+            const patterns = [];
+            // Head & Shoulders: Check for 3 peaks with middle higher
+            if (highs.length > 5 && highs[highs.length - 3] > highs[highs.length - 5] && highs[highs.length - 3] > highs[highs.length - 1]) {
+                patterns.push('Head & Shoulders');
+            }
+            // Double Top/Bottom: Two similar highs/lows
+            if (Math.abs(highs[highs.length - 1] - highs[highs.length - 3]) < 50) patterns.push('Double Top');
+            // Triangle: Converging highs/lows
+            if (highs.slice(-5).every((h, i, arr) => i === 0 || h < arr[i - 1])) patterns.push('Triangle');
+            return patterns;
+        }
+
+        // Render chart
+        function renderChart(containerId, positionId, indicatorsId, data, title) {
+            const chart = LightweightCharts.createChart(document.getElementById(containerId), { width: 600, height: 400 });
+            const candlestickSeries = chart.addCandlestickSeries();
+            candlestickSeries.setData(data);
+
+            const closes = data.map(d => d.close);
+            const highs = data.map(d => d.high);
+            const lows = data.map(d => d.low);
+
+            // Indicators
+            const rsi = calculateRSI(closes);
+            const sma = calculateSMA(closes);
+            const macd = calculateMACD(closes);
+            const bb = calculateBollingerBands(closes);
+            const stoch = calculateStochastic(highs, lows, closes);
+
+            chart.addLineSeries({ color: 'blue', title: 'RSI' }).setData(data.map(d => ({ time: d.time, value: rsi })));
+            chart.addLineSeries({ color: 'orange', title: 'SMA 20' }).setData(data.map(d => ({ time: d.time, value: sma })));
+            chart.addLineSeries({ color: 'purple', title: 'MACD' }).setData(data.map(d => ({ time: d.time, value: macd })));
+            chart.addLineSeries({ color: 'green', title: 'BB Upper' }).setData(data.map(d => ({ time: d.time, value: bb.upper })));
+            chart.addLineSeries({ color: 'red', title: 'BB Lower' }).setData(data.map(d => ({ time: d.time, value: bb.lower })));
+            chart.addLineSeries({ color: 'black', title: 'Stochastic' }).setData(data.map(d => ({ time: d.time, value: stoch })));
+
+            // Support/Resistance/Trend Lines
+            const support = Math.min(...lows);
+            const resistance = Math.max(...highs);
+            chart.addLineSeries({ color: 'green', title: 'Support' }).setData([{ time: data[0].time, value: support }, { time: data[data.length - 1].time, value: support }]);
+            chart.addLineSeries({ color: 'red', title: 'Resistance' }).setData([{ time: data[0].time, value: resistance }, { time: data[data.length - 1].time, value: resistance }]);
+            chart.addLineSeries({ color: 'purple', title: 'Trend Line' }).setData([{ time: data[0].time, value: highs[0] }, { time: data[data.length - 1].time, value: highs[highs.length - 1] }]);
+
+            // Patterns
+            const patterns = detectPatterns(data);
+            document.getElementById(indicatorsId).innerHTML = `RSI: ${rsi.toFixed(2)} | SMA: ${sma.toFixed(2)} | MACD: ${macd.toFixed(2)} | BB: ${bb.upper.toFixed(2)}/${bb.lower.toFixed(2)} | Stochastic: ${stoch.toFixed(2)} | Patterns: ${patterns.join(', ') || 'None'}`;
+
+            // Position Logic
+            let position = 'HOLD';
+            if (rsi < 30 && closes[closes.length - 1] > sma && macd > 0) position = 'LONG';
+            else if (rsi > 70 && closes[closes.length - 1] < sma && macd < 0) position = 'SHORT';
+
+            document.getElementById(positionId).textContent = position;
+            document.getElementById(positionId).className = `position ${position.toLowerCase()}`;
+        }
+
+        function refreshCharts() {
+            mockNiftyData = generateMockData(19500 + Math.random() * 200 - 100, 100);
+            mockBankNiftyData = generateMockData(44000 + Math.random() * 400 - 200, 100);
+            renderChart('nifty-chart', 'nifty-position', 'nifty-indicators', mockNiftyData, 'Nifty 50');
+            renderChart('banknifty-chart', 'banknifty-position', 'banknifty-indicators', mockBankNiftyData, 'BankNifty');
+        }
+
+        // Initial render
+        refreshCharts();
+    </script>
+</body>
+</html>
